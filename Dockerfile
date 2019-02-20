@@ -9,8 +9,7 @@ RUN set -x \
       curl \
       netcat \
       pigz \
-      percona-toolkit \
-      percona-xtrabackup \
+      mariadb-backup-10.2 \ 
       pv \
     && tar -C /usr/local/bin -xf /tmp/qpress.tar qpress \
     && chmod +x /usr/local/bin/qpress \

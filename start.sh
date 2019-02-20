@@ -135,6 +135,8 @@ fi
 
 MYSQL_MODE_ARGS=""
 
+MYSQL_MODE_ARGS+=" --wsrep_sst_auth=mariabackup:mypassword"
+
 #
 # Read optional secrets from files
 #
@@ -146,7 +148,7 @@ if [[ $SST_METHOD =~ ^(xtrabackup|mariabackup) ]] ; then
 	XTRABACKUP_PASSWORD=$(cat $XTRABACKUP_PASSWORD_FILE)
   fi
   [ -z "$XTRABACKUP_PASSWORD" ] && echo "WARNING: XTRABACKUP_PASSWORD is empty"
-  MYSQL_MODE_ARGS+=" --wsrep_sst_auth=xtrabackup:$XTRABACKUP_PASSWORD" 
+  #MYSQL_MODE_ARGS+=" --wsrep_sst_auth=xtrabackup:$XTRABACKUP_PASSWORD"
 fi
 
 SYSTEM_PASSWORD_FILE=${SYSTEM_PASSWORD_FILE:-/run/secrets/system_password}
@@ -220,6 +222,24 @@ then
 	cat >> /tmp/bootstrap.sql <<EOF
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'${MYSQL_ROOT_HOST}' IDENTIFIED BY '$MYSQL_ROOT_PASSWORD' WITH GRANT OPTION;
 EOF
+
+ # Create 'mariabackup' user
+        cat >> /tmp/bootstrap.sql <<EOF
+CREATE USER IF NOT EXISTS 'mariabackup'@'localhost' IDENTIFIED BY 'mypassword';
+GRANT RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT ON *.* TO 'mariabackup'@'localhost';
+CREATE USER IF NOT EXISTS 'mariabackup'@'127.0.0.1' IDENTIFIED BY 'mypassword';
+GRANT RELOAD, PROCESS, LOCK TABLES, REPLICATION CLIENT ON *.* TO 'mariabackup'@'127.0.0.1';
+
+# CREATE MAXSCALE USER
+CREATE USER IF NOT EXISTS 'maxscale'@'%' identified by '$MAXSCALE_PASS';
+GRANT SELECT on mysql.user to 'maxscale'@'%';
+GRANT SELECT ON mysql.db TO 'maxscale'@'%';
+GRANT SELECT ON mysql.tables_priv TO 'maxscale'@'%';
+GRANT REPLICATION CLIENT ON *.* to 'maxscale'@'%';
+GRANT SHOW DATABASES ON *.* TO 'maxscale'@'%';
+EOF
+
+
 	if [ "$MYSQL_ROOT_SOCKET_AUTH" = "0" ]; then
 		cat >> /tmp/bootstrap.sql <<EOF
 GRANT ALL PRIVILEGES ON *.* TO 'root'@'localhost' IDENTIFIED VIA unix_socket WITH GRANT OPTION;
@@ -394,10 +414,6 @@ galera-healthcheck -user=system -password="$SYSTEM_PASSWORD" \
 	-availWhenReadOnly=true \
 	-pidfile=/var/run/galera-healthcheck-2.pid >/dev/null &
 
-# Run automated upgrades
-if [[ -z $SKIP_UPGRADES ]] && [[ ! -f /var/lib/mysql/skip-upgrades ]]; then
-	sleep 5 && run-upgrades.sh || true &
-fi
 
 gosu mysql mysqld.sh --console \
 	$MYSQL_MODE_ARGS \
