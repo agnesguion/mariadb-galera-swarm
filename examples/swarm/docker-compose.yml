@@ -1,45 +1,81 @@
 version: '3.4'
 
 services:
-  seed:
-    image: colinmollenhour/mariadb-galera-swarm
+  mariadb-seed:
+    image: 127.0.0.1:5000/mariadb_swarm:latest
     environment:
-      - XTRABACKUP_PASSWORD_FILE=/run/secrets/xtrabackup_password
-      - MYSQL_USER=user
-      - MYSQL_PASSWORD_FILE=/run/secrets/mysql_password
-      - MYSQL_DATABASE=database
-      - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
-      - NODE_ADDRESS=^10.0.*.*
+    - MAXSCALE_PASS=maxscalepass
+    - SST_METHOD=mariabackup
+    #      - SYSTEM_PASSWORD=system
+    - XTRABACKUP_PASSWORD_FILE=/run/secrets/xtrabackup_password
+    - SYSTEM_PASSWORD_FILE=/run/secrets/system_password
+    - MYSQL_USER=user
+    - MYSQL_ROOT_HOST=%
+    - MYSQL_PASSWORD_FILE=/run/secrets/mysql_password
+    - MYSQL_DATABASE=database
+    - MYSQL_ROOT_PASSWORD_FILE=/run/secrets/mysql_root_password
+    - NODE_ADDRESS=^10.0.*.*
     networks:
-      - galera_network
+    - galera_network
     command: seed
     volumes:
-      - mysql-data:/var/lib/mysql
+    - mariadb-data:/var/lib/mysql
     secrets:
-      - xtrabackup_password
-      - mysql_password
-      - mysql_root_password
-  node:
-    image: colinmollenhour/mariadb-galera-swarm
+    - xtrabackup_password
+    - mysql_password
+    - mysql_root_password
+
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.labels.galera == seed]
+    configs:
+    - source: mariadb-config
+      target: /docker-entrypoint-initdb.d/init.sql
+
+
+  mariadb:
+    image: 127.0.0.1:5000/mariadb_swarm:latest
     environment:
-      - XTRABACKUP_PASSWORD_FILE=/run/secrets/xtrabackup_password
-      - NODE_ADDRESS=^10.0.*.*
-      - HEALTHY_WHILE_BOOTING=1
+    - MYSQL_ROOT_HOST=%
+    - SST_METHOD=mariabackup
+    - MAXSCALE_PASS=maxscalepass
+    - SYSTEM_PASSWORD_FILE=/run/secrets/system_password
+    - XTRABACKUP_PASSWORD_FILE=/run/secrets/xtrabackup_password
+    - NODE_ADDRESS=^10.0.*.*
+    - HEALTHY_WHILE_BOOTING=1
     networks:
-      - galera_network
-    command: node seed,node
+    - galera_network
+    command: node mariadb-seed,mariadb
     volumes:
-      - mysql-data:/var/lib/mysql
+    - mariadb-data:/var/lib/mysql
+    secrets:
+    - xtrabackup_password
+    deploy:
+      endpoint_mode: dnsrr
+      mode: 'global'
+      placement:
+        constraints: [node.labels.galera == node]
+    configs:
+    - source: mariadb-config
+      target: /docker-entrypoint-initdb.d/init.sql
+
+  maxscale:
+    image: toughiq/maxscale:1.4.5
+    environment:
+    - MAXSCALE_PASS=maxscalepass
+    - DB_SERVICE_NAME=mariadb
+    - ENABLE_ROOT_USER=1
+    networks:
+    - galera_network
     deploy:
       replicas: 0
-      endpoint_mode: dnsrr
-    secrets:
-      - xtrabackup_password
+    ports:
+    - 3306:3306
+
 
 volumes:
-  mysql-data:
-    name: '{{.Service.Name}}-{{.Task.Slot}}-data'
-    driver: local
+  mariadb-data: {}
 
 networks:
   galera_network:
@@ -52,3 +88,11 @@ secrets:
     file: .secrets/mysql_password
   mysql_root_password:
     file: .secrets/mysql_root_password
+  system_password:
+    file: .secrets/system_password
+
+
+configs:
+  mariadb-config:
+    file: ./init.sql
+
